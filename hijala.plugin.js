@@ -107,14 +107,7 @@ const plugin = {
       const label = txt(a) || attr(a, ["title"]) || ("Chapter " + (i + 1));
       const match = label.match(/(?:chapter|ch\.?|الفصل)\s*([0-9]+(?:\.[0-9]+)?)/i) || href.match(/chapter[-/ ]?([0-9]+(?:\.[0-9]+)?)/i);
       return {
-        id: (() => {
-          try {
-            const u = new URL(href, BASE);
-            return u.pathname.replace(/^\/+|\/+$/g, "");
-          } catch (_) {
-            return String(href).replace(BASE, "").replace(/^\/+|\/+$/g, "");
-          }
-        })(),
+        id: href.replace(BASE, "").replace(/^\/+/, ""),
         chapter: match ? match[1] : null,
         title: label,
         pages: 0,
@@ -124,34 +117,16 @@ const plugin = {
   },
   async pageUrls(chapterId) {
     const doc = await getDoc("/" + cleanId(chapterId));
-
-    // Only collect images inside chapter-reader containers. Scanning every img
-    // on the page also captures banners, recommendations, and other manga covers.
-    const selectors = [
-      ".reading-content img",
-      ".reader-area img",
-      ".chapter-content img",
-      ".chapter-images img",
-      ".page-break img",
-      ".reader img",
-      ".wp-manga-chapter-img",
-      ".reading-area img"
-    ];
-    let imgs = [];
-    for (const selector of selectors) {
-      const found = doc.querySelectorAll(selector);
-      if (found && found.length) {
-        imgs = found;
-        break;
-      }
-    }
-
+    // Hijala serves actual chapter pages from /wp-content/uploads/manga/.
+    // Scan image tags, but exclude banners, manga covers, and recommendation art.
+    const imgs = doc.querySelectorAll("img");
     const seen = new Set();
     return imgs.map(img => abs(attr(img, [
-      "data-src", "data-lazy-src", "data-original",
-      "data-cfsrc", "data-echo", "data-url", "src"
+      "data-src", "data-lazy-src", "data-original", "data-cfsrc", "src"
     ]))).filter(url => {
-      if (!url || seen.has(url)) return false;
+      if (!url || !/\\/wp-content\\/uploads\\/manga\\//i.test(url)) return false;
+      if (!/\\.(?:jpe?g|png|webp|avif)(?:[?#]|$)/i.test(url)) return false;
+      if (seen.has(url)) return false;
       seen.add(url);
       return true;
     });
