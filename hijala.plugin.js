@@ -155,4 +155,5 @@ const plugin = {
       seen.add(url);
       return true;
     });
-  }};
+  }
+};
