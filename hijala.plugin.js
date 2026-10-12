@@ -60,18 +60,6 @@ function cards(doc) {
 function cleanId(id) { return String(id || "").replace(/^\/+|\/+$/g, ""); }
 function urlForId(id) { return BASE + "/" + cleanId(id); }
 
-
-function cleanChapterTitle(label) {
-  let value = String(label || "").replace(/\s+/g, " ").trim();
-  // Remove common dates appended to chapter names, without changing chapter discovery.
-  value = value
-    .replace(/\s*(?:[-|–—·,])\s*(?:\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4})\s*$/i, "")
-    .replace(/\s*(?:[-|–—·,])\s*(?:اليوم|أمس|امس|منذ\s+\S+(?:\s+\S+)?|قبل\s+\S+(?:\s+\S+)?)\s*$/i, "")
-    .replace(/\s+(?:\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4})\s*$/i, "")
-    .trim();
-  return value || String(label || "").trim();
-}
-
 const plugin = {
   id: SOURCE_ID,
   name: SOURCE_NAME,
@@ -116,11 +104,17 @@ const plugin = {
     }
     return links.map((a, i) => {
       const href = attr(a, ["href"]) || "";
-      const rawLabel = txt(a) || attr(a, ["title"]) || ("Chapter " + (i + 1));
-      const label = cleanChapterTitle(rawLabel);
+      const label = txt(a) || attr(a, ["title"]) || ("Chapter " + (i + 1));
       const match = label.match(/(?:chapter|ch\.?|الفصل)\s*([0-9]+(?:\.[0-9]+)?)/i) || href.match(/chapter[-/ ]?([0-9]+(?:\.[0-9]+)?)/i);
       return {
-        id: href.replace(BASE, "").replace(/^\/+/, ""),
+        id: (() => {
+          try {
+            const u = new URL(href, BASE);
+            return u.pathname.replace(/^\/+|\/+$/g, "");
+          } catch (_) {
+            return String(href).replace(BASE, "").replace(/^\/+|\/+$/g, "");
+          }
+        })(),
         chapter: match ? match[1] : null,
         title: label,
         pages: 0,
@@ -130,7 +124,17 @@ const plugin = {
   },
   async pageUrls(chapterId) {
     const doc = await getDoc("/" + cleanId(chapterId));
-    const imgs = doc.querySelectorAll(".reading-content img, .reader-area img, .chapter-content img, .page-break img, .reader img, img.wp-manga-chapter-img");
-    return imgs.map(img => abs(attr(img, ["data-src", "data-lazy-src", "data-original", "src"]))).filter(Boolean);
+    // Hijala's reader markup can vary; scan all image elements and prefer lazy-load
+    // attributes before src. Keep chapter URLs unchanged and de-duplicate image URLs.
+    const imgs = doc.querySelectorAll("img");
+    const seen = new Set();
+    return imgs.map(img => abs(attr(img, [
+      "data-src", "data-lazy-src", "data-original", "data-cfsrc",
+      "data-echo", "data-url", "src"
+    ]))).filter(url => {
+      if (!url || seen.has(url)) return false;
+      seen.add(url);
+      return true;
+    });
   }
 };
