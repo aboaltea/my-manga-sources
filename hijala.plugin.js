@@ -1,13 +1,12 @@
-// Hijala Manga source for Harbor.
-// Hijala is WordPress-like but its home page mixes series cards and latest-chapter posts.
-// IDs are stored as relative paths so they round-trip through detail/chapters/pageUrls.
+// Harbor source plugin. Runs with `harbor` provided by the host.
+// Network: harbor.http only. HTML: harbor.parseHtml only.
 const BASE = "https://hijala.com";
 const SOURCE_ID = "hijala-ar";
 const SOURCE_NAME = "Hijala Manga";
 
 async function getDoc(path) {
   const res = await harbor.http(BASE + path, { responseType: "text" });
-  if (!res || res.ok === false) throw new Error("Hijala HTTP " + (res?.status || "error"));
+  if (!res.ok) throw new Error("HTTP " + res.status + " for " + path);
   return harbor.parseHtml(res.body);
 }
 function abs(url) {
@@ -17,24 +16,6 @@ function abs(url) {
   if (url.startsWith("/")) return BASE + url;
   return BASE + "/" + url;
 }
-function attr(el, names) {
-  if (!el) return "";
-  for (const n of names) {
-    const v = el.attr(n);
-    if (v) return v;
-  }
-  return "";
-}
-function text(el) { return (el?.text?.() || "").replace(/\s+/g, " ").trim(); }
-function pathId(href) {
-  if (!href) return "";
-  try {
-    const path = href.startsWith("http") ? new URL(href).pathname : href;
-    return path.replace(/^\/+|\/+$/g, "");
-  } catch (_) {
-    return href.replace(BASE, "").replace(/^\/+|\/+$/g, "");
-  }
-}
 function first(el, selectors) {
   for (const s of selectors) {
     const found = el.querySelector(s);
@@ -42,132 +23,114 @@ function first(el, selectors) {
   }
   return null;
 }
-function toSummary(el) {
-  const a = first(el, ["a.manga-title", "a.cover", ".post-title a", ".entry-title a", "h3 a", "h2 a", "a[href]"]);
+function attr(el, names) {
+  if (!el) return undefined;
+  for (const n of names) {
+    const v = el.attr(n);
+    if (v) return v;
+  }
+  return undefined;
+}
+function txt(el) { return (el?.text?.() || "").trim(); }
+function summaryFrom(el) {
+  const a = first(el, ["a.cover", ".thumb a", ".poster a", "a[href*='/manga/']", "a[href*='/series/']", "a[href*='/comic/']", "a"]);
+  if (!a) return null;
   const img = first(el, ["img"]);
-  if (!a || !attr(a, ["href"])) return null;
   const href = attr(a, ["href"]);
-  const title = attr(a, ["title", "aria-label"]) || text(first(el, [".post-title", ".entry-title", ".title", "h3", "h2"])) || text(a);
+  if (!href) return null;
+  const title = attr(a, ["title", "aria-label"]) || txt(first(el, [".title", ".post-title", ".manga-title", "h3", "h2"])) || txt(a);
   if (!title) return null;
   return {
-    id: pathId(href),
+    id: href.replace(BASE, "").replace(/^\/|\/$/g, ""),
     title,
     cover: abs(attr(img, ["data-src", "data-lazy-src", "data-original", "src"]))
   };
 }
-function collectCards(doc) {
-  const selectors = [".c-tabs-item", ".page-item-detail", ".bs", ".manga-item", ".post-item", ".manga", ".item", "article"];
-  for (const selector of selectors) {
-    const items = doc.querySelectorAll(selector);
-    if (items && items.length) {
-      const results = items.map(toSummary).filter(x => x && x.id && x.title);
-      if (results.length) return results;
+function cards(doc) {
+  const selectors = [".manga-item", ".bs", ".utao", ".page-item-detail", ".c-tabs-item", ".post-item", ".manga", ".comic-item", ".item"];
+  for (const s of selectors) {
+    const els = doc.querySelectorAll(s);
+    if (els && els.length) {
+      const rows = els.map(summaryFrom).filter(Boolean);
+      if (rows.length) return rows;
     }
   }
-  return [];
+  return doc.querySelectorAll("article").map(summaryFrom).filter(Boolean);
 }
-function cleanChapterLabel(label, href) {
-  let s = (label || "").replace(/\s+/g, " ").trim();
-  // Never expose the site's unrendered recent-reading template as a chapter.
-  if (/\{\{\s*(?:number|date)\s*\}\}/i.test(s)) return "";
-  s = s.replace(/\b(?:just now|seconds? ago|minutes? ago|hours? ago|days? ago|weeks? ago|months? ago|years? ago)\b/ig, "");
-  s = s.replace(/(?:منذ\s*)?\d+\s*(?:ثانية|ثوانٍ|دقيقة|دقائق|ساعة|ساعات|يوم|أيام|أسبوع|أسابيع|شهر|أشهر|سنة|سنوات)/ig, "");
-  s = s.replace(/\s{2,}/g, " ").trim();
-  if (!s || /\{\{|\}\}/.test(s)) return "";
-  if (!/(?:الفصل|فصل|chapter|ch\.?)[\s#：:-]*\d+/i.test(s)) {
-    const m = (href || "").match(/(?:chapter|ch)[-_/ ]*(\d+(?:\.\d+)?)/i) || (href || "").match(/[-_/](\d+(?:\.\d+)?)(?:\/?(?:\?.*)?)$/i);
-    if (m) s = "الفصل " + m[1];
-  }
-  return s;
+function cleanId(id) { return String(id || "").replace(/^\/+|\/+$/g, ""); }
+function urlForId(id) { return BASE + "/" + cleanId(id); }
+
+
+function cleanChapterTitle(label) {
+  let value = String(label || "").replace(/\s+/g, " ").trim();
+  // Remove common dates appended to chapter names, without changing chapter discovery.
+  value = value
+    .replace(/\s*(?:[-|–—·,])\s*(?:\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4})\s*$/i, "")
+    .replace(/\s*(?:[-|–—·,])\s*(?:اليوم|أمس|امس|منذ\s+\S+(?:\s+\S+)?|قبل\s+\S+(?:\s+\S+)?)\s*$/i, "")
+    .replace(/\s+(?:\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4})\s*$/i, "")
+    .trim();
+  return value || String(label || "").trim();
 }
-function isRealChapterLink(a) {
-  const href = attr(a, ["href"]);
-  const label = text(a);
-  if (!href || !label || /\{\{|\}\}/.test(label)) return false;
-  if (/^(?:#|javascript:)/i.test(href)) return false;
-  // Hijala chapter URLs include a chapter number in either the URL or visible label.
-  return /(?:الفصل|فصل|chapter|ch\.?)[\s#：:-]*\d+/i.test(label) || /(?:chapter|ch)[-_/ ]*\d+|[-_/]\d+(?:\.\d+)?\/?(?:\?.*)?$/i.test(href);
-}
+
 const plugin = {
   id: SOURCE_ID,
   name: SOURCE_NAME,
   async popular(offset = 0, tagId) {
-    const page = Math.floor(Math.max(0, offset) / 24) + 1;
+    const page = Math.floor(offset / 24) + 1;
     const path = page === 1 ? "/" : "/page/" + page + "/";
     const doc = await getDoc(path);
-    return collectCards(doc).slice(0, 24);
+    return cards(doc).slice(0, 24);
   },
-  async search(query, offset = 0) {
-    const page = Math.floor(Math.max(0, offset) / 24) + 1;
+  async search(query, offset = 0, tagId) {
+    const page = Math.floor(offset / 24) + 1;
     const path = "/?s=" + encodeURIComponent(query) + (page > 1 ? "&paged=" + page : "");
     const doc = await getDoc(path);
-    return collectCards(doc).slice(0, 24);
+    return cards(doc).slice(0, 24);
   },
   async detail(id) {
-    const doc = await getDoc("/" + String(id).replace(/^\/+|\/+$/g, "") + "/");
-    const titleEl = first(doc, ["h1.entry-title", "h1", ".post-title"]);
-    const coverEl = first(doc, [".summary_image img", ".thumb img", ".poster img", "article img"]);
-    const descEl = first(doc, [".description", ".summary__content", ".entry-content p", ".manga-excerpt"]);
-    const chapterLinks = doc.querySelectorAll(".wp-manga-chapter a, .listing-chapters_wrap a, .chapter-list a, a[href*='chapter']");
-    const chapterLink = chapterLinks.find(isRealChapterLink);
+    const doc = await getDoc("/" + cleanId(id));
+    const root = first(doc, [".site-content", ".profile-manga", ".postbody", ".manga-info", ".series", "article"]) || doc;
+    const titleEl = first(root, ["h1", ".entry-title", ".post-title", ".manga-title"]);
+    const coverEl = first(root, [".summary_image img", ".thumb img", ".poster img", ".manga-cover img", "img"]);
+    const descEl = first(root, [".description", ".summary__content", ".entry-content", ".manga-excerpt", ".content p"]);
+    const statusEl = first(root, [".post-status", ".status", ".manga-status"]);
+    const authorEl = first(root, [".author", ".author-content", ".manga-author"]);
+    const ch = first(root, [".chapter-list a", ".wp-manga-chapter a", ".chapters a", ".eplister a"]);
     return {
-      id: String(id).replace(/^\/+|\/+$/g, ""),
-      title: text(titleEl) || String(id),
+      id: cleanId(id),
+      title: txt(titleEl) || cleanId(id),
       cover: abs(attr(coverEl, ["data-src", "data-lazy-src", "src"])),
-      description: text(descEl),
-      lastChapter: chapterLink ? cleanChapterLabel(text(chapterLink), attr(chapterLink, ["href"])) || undefined : undefined
+      description: txt(descEl),
+      status: txt(statusEl) || undefined,
+      author: txt(authorEl) || undefined,
+      lastChapter: txt(ch) || undefined
     };
   },
   async chapters(id) {
-    const seriesId = String(id).replace(/^\/+|\/+$/g, "");
-    const doc = await getDoc("/" + seriesId + "/");
-    // Hijala chapter links use series-slug-number URLs (for example /lookism-628/).
-    // Scan all anchors rather than relying on theme-specific class names.
-    const anchors = doc.querySelectorAll("a[href]");
-    const seen = new Set();
-    const out = [];
-    for (const a of anchors) {
-      const href = attr(a, ["href"]);
-      const rawLabel = text(a);
-      if (!href || !rawLabel || /\{\{|\}\}/.test(rawLabel)) continue;
-      if (/^(?:#|javascript:|mailto:)/i.test(href)) continue;
-
-      const labelMatch = rawLabel.match(/(?:الفصل|فصل)\s*#?\s*([0-9]+(?:\.[0-9]+)?)/i) ||
-                         rawLabel.match(/chapter\s*#?\s*([0-9]+(?:\.[0-9]+)?)/i);
-      if (!labelMatch) continue;
-
-      const chapterId = pathId(href);
-      if (!chapterId || seen.has(chapterId)) continue;
-
-      // Restrict to chapter URLs belonging to this series. This avoids picking up
-      // recommendations or the unrendered "last read" template from other widgets.
-      const slug = seriesId.split("/").pop().toLowerCase();
-      const chapterSlug = chapterId.toLowerCase().split("/").pop();
-      const urlNumber = chapterSlug.match(new RegExp("^" + slug.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "-([0-9]+(?:\\.[0-9]+)?)$"));
-      if (!urlNumber && !chapterSlug.includes("chapter") && !chapterSlug.includes("ch-")) continue;
-
-      const cleaned = cleanChapterLabel(rawLabel, href);
-      if (!cleaned) continue;
-      seen.add(chapterId);
-      out.push({
-        id: chapterId,
-        chapter: labelMatch[1] || (urlNumber ? urlNumber[1] : null),
-        title: cleaned,
+    const doc = await getDoc("/" + cleanId(id));
+    const selectors = [".wp-manga-chapter a", ".chapter-list a", ".eplister a", ".listing-chapters_wrap a", ".chapters a", "a[href*='chapter']"];
+    let links = [];
+    for (const s of selectors) {
+      links = doc.querySelectorAll(s);
+      if (links && links.length) break;
+    }
+    return links.map((a, i) => {
+      const href = attr(a, ["href"]) || "";
+      const rawLabel = txt(a) || attr(a, ["title"]) || ("Chapter " + (i + 1));
+      const label = cleanChapterTitle(rawLabel);
+      const match = label.match(/(?:chapter|ch\.?|الفصل)\s*([0-9]+(?:\.[0-9]+)?)/i) || href.match(/chapter[-/ ]?([0-9]+(?:\.[0-9]+)?)/i);
+      return {
+        id: href.replace(BASE, "").replace(/^\/+/, ""),
+        chapter: match ? match[1] : null,
+        title: label,
         pages: 0,
         language: "ar"
-      });
-    }
-    return out;
+      };
+    }).filter(c => c.id);
   },
   async pageUrls(chapterId) {
-    const doc = await getDoc("/" + String(chapterId).replace(/^\/+|\/+$/g, "") + "/");
-    let imgs = [];
-    for (const selector of [".reading-content img", ".reader-area img", ".chapter-content img", ".page-break img", ".reader img", "article img", "img[data-src]", "img[data-lazy-src]"]) {
-      const found = doc.querySelectorAll(selector);
-      if (found && found.length) imgs = imgs.concat(found);
-    }
-    const seen = new Set();
-    return imgs.map(img => abs(attr(img, ["data-src", "data-lazy-src", "data-original", "src"])))
-      .filter(url => url && !seen.has(url) && seen.add(url));
+    const doc = await getDoc("/" + cleanId(chapterId));
+    const imgs = doc.querySelectorAll(".reading-content img, .reader-area img, .chapter-content img, .page-break img, .reader img, img.wp-manga-chapter-img");
+    return imgs.map(img => abs(attr(img, ["data-src", "data-lazy-src", "data-original", "src"]))).filter(Boolean);
   }
 };
