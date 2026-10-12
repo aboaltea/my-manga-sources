@@ -1,16 +1,10 @@
-# My Manga Sources
+# My Manga Sources — targeted fixes
 
-This repository manifest contains four Arabic website adapters and one English MangaDex API adapter.
+This patch replaces only:
+- `mangadex.plugin.js`: requests up to 500 English chapters, excludes external links, adds retries for API calls, and uses MangaDex data-saver image URLs.
+- `hijala.plugin.js`: normalizes IDs, removes common relative date text from chapter labels, and improves selector fallbacks.
 
-## Files
-- `repo.json`: source manifest
-- `hijala.plugin.js`
-- `starzmanga.plugin.js`
-- `azorafly.plugin.js`
-- `mangaarabia.plugin.js`
-- `mangadex.plugin.js`
-
-## Important
-The four HTML scrapers use common selector fallbacks. Website themes and markup can change, so test each source in the target app and tune selectors if search, chapters, or reader pages return empty results. MangaDex uses its public API and English-translated chapters.
-
-Only access and read content you are authorized to use. Respect each site's terms, copyright, and rate limits.
+Important limitations:
+- MangaDex can only return chapters available in English and hosted directly on MangaDex through this feed. If older chapters are only available in another language or on a different website, this source cannot conjure them.
+- The app controls image rendering and any per-image Retry button after page URLs have been returned. Data-saver URLs reduce payload size, but intermittent CDN/network failures can still happen.
+- Test the two replacement files in Harbor before replacing the originals permanently. Keep the other three source files as-is for now.
