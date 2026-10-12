@@ -119,34 +119,55 @@ const plugin = {
     };
   },
   async chapters(id) {
-    const doc = await getDoc("/" + String(id).replace(/^\/+|\/+$/g, "") + "/");
-    const selectors = [".wp-manga-chapter a", ".listing-chapters_wrap a", ".chapter-list a", "a[href*='chapter']"];
-    let links = [];
-    for (const selector of selectors) {
-      const found = doc.querySelectorAll(selector);
-      if (found && found.length) links = links.concat(found);
-    }
+    const seriesId = String(id).replace(/^\/+|\/+$/g, "");
+    const doc = await getDoc("/" + seriesId + "/");
+    // Hijala chapter links use series-slug-number URLs (for example /lookism-628/).
+    // Scan all anchors rather than relying on theme-specific class names.
+    const anchors = doc.querySelectorAll("a[href]");
     const seen = new Set();
-    return links.filter(isRealChapterLink).map(a => {
+    const out = [];
+    for (const a of anchors) {
       const href = attr(a, ["href"]);
-      const label = cleanChapterLabel(text(a), href);
-      const num = label.match(/(?:الفصل|فصل|chapter|ch\.?)\s*#?\s*([0-9]+(?:\.[0-9]+)?)/i) ||
-                  (href || "").match(/(?:chapter|ch)[-_/ ]*(\d+(?:\.\d+)?)|[-_/](\d+(?:\.\d+)?)(?:\/?(?:\?.*)?)$/i);
-      const id = pathId(href);
-      if (!id || !label || seen.has(id)) return null;
-      seen.add(id);
-      return {
-        id,
-        chapter: num ? (num[1] || num[2]) : null,
-        title: label,
+      const rawLabel = text(a);
+      if (!href || !rawLabel || /\{\{|\}\}/.test(rawLabel)) continue;
+      if (/^(?:#|javascript:|mailto:)/i.test(href)) continue;
+
+      const labelMatch = rawLabel.match(/(?:الفصل|فصل)\s*#?\s*([0-9]+(?:\.[0-9]+)?)/i) ||
+                         rawLabel.match(/chapter\s*#?\s*([0-9]+(?:\.[0-9]+)?)/i);
+      if (!labelMatch) continue;
+
+      const chapterId = pathId(href);
+      if (!chapterId || seen.has(chapterId)) continue;
+
+      // Restrict to chapter URLs belonging to this series. This avoids picking up
+      // recommendations or the unrendered "last read" template from other widgets.
+      const slug = seriesId.split("/").pop().toLowerCase();
+      const chapterSlug = chapterId.toLowerCase().split("/").pop();
+      const urlNumber = chapterSlug.match(new RegExp("^" + slug.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "-([0-9]+(?:\\.[0-9]+)?)$"));
+      if (!urlNumber && !chapterSlug.includes("chapter") && !chapterSlug.includes("ch-")) continue;
+
+      const cleaned = cleanChapterLabel(rawLabel, href);
+      if (!cleaned) continue;
+      seen.add(chapterId);
+      out.push({
+        id: chapterId,
+        chapter: labelMatch[1] || (urlNumber ? urlNumber[1] : null),
+        title: cleaned,
         pages: 0,
         language: "ar"
-      };
-    }).filter(Boolean);
+      });
+    }
+    return out;
   },
   async pageUrls(chapterId) {
     const doc = await getDoc("/" + String(chapterId).replace(/^\/+|\/+$/g, "") + "/");
-    const imgs = doc.querySelectorAll(".reading-content img, .reader-area img, .chapter-content img, .page-break img, .reader img, article img");
-    return imgs.map(img => abs(attr(img, ["data-src", "data-lazy-src", "data-original", "src"]))).filter(Boolean);
+    let imgs = [];
+    for (const selector of [".reading-content img", ".reader-area img", ".chapter-content img", ".page-break img", ".reader img", "article img", "img[data-src]", "img[data-lazy-src]"]) {
+      const found = doc.querySelectorAll(selector);
+      if (found && found.length) imgs = imgs.concat(found);
+    }
+    const seen = new Set();
+    return imgs.map(img => abs(attr(img, ["data-src", "data-lazy-src", "data-original", "src"])))
+      .filter(url => url && !seen.has(url) && seen.add(url));
   }
 };
