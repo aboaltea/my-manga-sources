@@ -68,22 +68,32 @@ function collectCards(doc) {
 }
 function cleanChapterLabel(label, href) {
   let s = (label || "").replace(/\s+/g, " ").trim();
-  // Strip common relative release-date text that Hijala places beside chapter labels.
+  // Never expose the site's unrendered recent-reading template as a chapter.
+  if (/\{\{\s*(?:number|date)\s*\}\}/i.test(s)) return "";
   s = s.replace(/\b(?:just now|seconds? ago|minutes? ago|hours? ago|days? ago|weeks? ago|months? ago|years? ago)\b/ig, "");
   s = s.replace(/(?:منذ\s*)?\d+\s*(?:ثانية|ثوانٍ|دقيقة|دقائق|ساعة|ساعات|يوم|أيام|أسبوع|أسابيع|شهر|أشهر|سنة|سنوات)/ig, "");
   s = s.replace(/\s{2,}/g, " ").trim();
-  if (!s) {
-    const m = (href || "").match(/(\d+(?:\.\d+)?)/);
+  if (!s || /\{\{|\}\}/.test(s)) return "";
+  if (!/(?:الفصل|فصل|chapter|ch\.?)[\s#：:-]*\d+/i.test(s)) {
+    const m = (href || "").match(/(?:chapter|ch)[-_/ ]*(\d+(?:\.\d+)?)/i) || (href || "").match(/[-_/](\d+(?:\.\d+)?)(?:\/?(?:\?.*)?)$/i);
     if (m) s = "الفصل " + m[1];
   }
   return s;
+}
+function isRealChapterLink(a) {
+  const href = attr(a, ["href"]);
+  const label = text(a);
+  if (!href || !label || /\{\{|\}\}/.test(label)) return false;
+  if (/^(?:#|javascript:)/i.test(href)) return false;
+  // Hijala chapter URLs include a chapter number in either the URL or visible label.
+  return /(?:الفصل|فصل|chapter|ch\.?)[\s#：:-]*\d+/i.test(label) || /(?:chapter|ch)[-_/ ]*\d+|[-_/]\d+(?:\.\d+)?\/?(?:\?.*)?$/i.test(href);
 }
 const plugin = {
   id: SOURCE_ID,
   name: SOURCE_NAME,
   async popular(offset = 0, tagId) {
     const page = Math.floor(Math.max(0, offset) / 24) + 1;
-    const path = page === 1 ? "/?order=title&type=Manhwa" : "/page/" + page + "/?order=title&type=Manhwa";
+    const path = page === 1 ? "/" : "/page/" + page + "/";
     const doc = await getDoc(path);
     return collectCards(doc).slice(0, 24);
   },
@@ -98,35 +108,41 @@ const plugin = {
     const titleEl = first(doc, ["h1.entry-title", "h1", ".post-title"]);
     const coverEl = first(doc, [".summary_image img", ".thumb img", ".poster img", "article img"]);
     const descEl = first(doc, [".description", ".summary__content", ".entry-content p", ".manga-excerpt"]);
-    const chapterLink = first(doc, ["a[href*='chapter']", ".listing-chapters_wrap a", ".wp-manga-chapter a"]);
+    const chapterLinks = doc.querySelectorAll(".wp-manga-chapter a, .listing-chapters_wrap a, .chapter-list a, a[href*='chapter']");
+    const chapterLink = chapterLinks.find(isRealChapterLink);
     return {
       id: String(id).replace(/^\/+|\/+$/g, ""),
       title: text(titleEl) || String(id),
       cover: abs(attr(coverEl, ["data-src", "data-lazy-src", "src"])),
       description: text(descEl),
-      lastChapter: chapterLink ? cleanChapterLabel(text(chapterLink), attr(chapterLink, ["href"])) : undefined
+      lastChapter: chapterLink ? cleanChapterLabel(text(chapterLink), attr(chapterLink, ["href"])) || undefined : undefined
     };
   },
   async chapters(id) {
     const doc = await getDoc("/" + String(id).replace(/^\/+|\/+$/g, "") + "/");
+    const selectors = [".wp-manga-chapter a", ".listing-chapters_wrap a", ".chapter-list a", "a[href*='chapter']"];
     let links = [];
-    for (const selector of [".wp-manga-chapter a", ".listing-chapters_wrap a", ".chapter-list a", "a[href*='chapter']"]) {
-      links = doc.querySelectorAll(selector);
-      if (links && links.length) break;
+    for (const selector of selectors) {
+      const found = doc.querySelectorAll(selector);
+      if (found && found.length) links = links.concat(found);
     }
-    return links.map(a => {
+    const seen = new Set();
+    return links.filter(isRealChapterLink).map(a => {
       const href = attr(a, ["href"]);
       const label = cleanChapterLabel(text(a), href);
-      const num = label.match(/(?:الفصل|chapter|ch\.?)\s*\.?\s*([0-9]+(?:\.[0-9]+)?)/i) ||
-                  (href || "").match(/(\d+(?:\.\d+)?)(?:\/?$)/);
+      const num = label.match(/(?:الفصل|فصل|chapter|ch\.?)\s*#?\s*([0-9]+(?:\.[0-9]+)?)/i) ||
+                  (href || "").match(/(?:chapter|ch)[-_/ ]*(\d+(?:\.\d+)?)|[-_/](\d+(?:\.\d+)?)(?:\/?(?:\?.*)?)$/i);
+      const id = pathId(href);
+      if (!id || !label || seen.has(id)) return null;
+      seen.add(id);
       return {
-        id: pathId(href),
-        chapter: num ? num[1] : null,
+        id,
+        chapter: num ? (num[1] || num[2]) : null,
         title: label,
         pages: 0,
         language: "ar"
       };
-    }).filter(c => c.id);
+    }).filter(Boolean);
   },
   async pageUrls(chapterId) {
     const doc = await getDoc("/" + String(chapterId).replace(/^\/+|\/+$/g, "") + "/");
