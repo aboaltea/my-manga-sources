@@ -1,0 +1,50 @@
+{
+  "name": "My Manga Repo",
+  "plugins": [
+    {
+      "id": "hijala-ar",
+      "name": "Hijala Manga",
+      "version": "1.0.0",
+      "lang": "ar",
+      "nsfw": false,
+      "icon": "https://hijala.com/favicon.ico",
+      "entry": "hijala.plugin.js"
+    },
+    {
+      "id": "starzmanga-ar",
+      "name": "Manga Starz",
+      "version": "1.0.0",
+      "lang": "ar",
+      "nsfw": false,
+      "icon": "https://starzmanga.com/favicon.ico",
+      "entry": "starzmanga.plugin.js"
+    },
+    {
+      "id": "azora-ar",
+      "name": "Azora Manga",
+      "version": "1.0.0",
+      "lang": "ar",
+      "nsfw": false,
+      "icon": "https://azorafly.com/favicon.ico",
+      "entry": "azorafly.plugin.js"
+    },
+    {
+      "id": "mangaarabia-ar",
+      "name": "Manga Arabia",
+      "version": "1.0.0",
+      "lang": "ar",
+      "nsfw": false,
+      "icon": "https://www.mangaarabia.com/favicon.ico",
+      "entry": "mangaarabia.plugin.js"
+    },
+    {
+      "id": "mangadex-en",
+      "name": "MangaDex (English)",
+      "version": "1.0.0",
+      "lang": "en",
+      "nsfw": false,
+      "icon": "https://mangadex.org/favicon.ico",
+      "entry": "mangadex.plugin.js"
+    }
+  ]
+}
