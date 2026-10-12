@@ -103,13 +103,17 @@ const plugin = {
     return all;
   },
   async pageUrls(chapterId) {
-    const result = await request("/at-home/server/" + encodeURIComponent(chapterId));
+    // Ask MangaDex@Home for HTTPS on port 443; some networks block other ports.
+    // Keep the original-quality file list and matching /data/ path together.
+    // The reader's Retry button may reuse these URLs; this function is called
+    // again only if Harbor asks the source for page URLs again.
+    const result = await request(
+      "/at-home/server/" + encodeURIComponent(chapterId) + "?forcePort443=true"
+    );
     const ch = result.chapter;
-    if (!result.baseUrl || !ch?.hash) return [];
-    // data-saver filenames can differ from original-quality filenames.
-    const files = Array.isArray(ch.dataSaver) && ch.dataSaver.length ? ch.dataSaver : ch.data;
-    if (!Array.isArray(files)) return [];
-    const quality = files === ch.dataSaver ? "data-saver" : "data";
-    return files.map(file => result.baseUrl + "/" + quality + "/" + ch.hash + "/" + file);
+    if (!result.baseUrl || !ch?.hash || !Array.isArray(ch.data)) return [];
+    return ch.data.map(file =>
+      result.baseUrl + "/data/" + ch.hash + "/" + file
+    );
   }
 };
