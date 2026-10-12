@@ -40,7 +40,7 @@
     {
       "id": "mangadex-en",
       "name": "MangaDex (English)",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "lang": "en",
       "nsfw": false,
       "icon": "https://mangadex.org/favicon.ico",
