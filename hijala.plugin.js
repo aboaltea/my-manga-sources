@@ -124,17 +124,35 @@ const plugin = {
   },
   async pageUrls(chapterId) {
     const doc = await getDoc("/" + cleanId(chapterId));
-    // Hijala's reader markup can vary; scan all image elements and prefer lazy-load
-    // attributes before src. Keep chapter URLs unchanged and de-duplicate image URLs.
-    const imgs = doc.querySelectorAll("img");
+
+    // Only collect images inside chapter-reader containers. Scanning every img
+    // on the page also captures banners, recommendations, and other manga covers.
+    const selectors = [
+      ".reading-content img",
+      ".reader-area img",
+      ".chapter-content img",
+      ".chapter-images img",
+      ".page-break img",
+      ".reader img",
+      ".wp-manga-chapter-img",
+      ".reading-area img"
+    ];
+    let imgs = [];
+    for (const selector of selectors) {
+      const found = doc.querySelectorAll(selector);
+      if (found && found.length) {
+        imgs = found;
+        break;
+      }
+    }
+
     const seen = new Set();
     return imgs.map(img => abs(attr(img, [
-      "data-src", "data-lazy-src", "data-original", "data-cfsrc",
-      "data-echo", "data-url", "src"
+      "data-src", "data-lazy-src", "data-original",
+      "data-cfsrc", "data-echo", "data-url", "src"
     ]))).filter(url => {
       if (!url || seen.has(url)) return false;
       seen.add(url);
       return true;
     });
-  }
-};
+  }};
