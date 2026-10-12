@@ -5,10 +5,13 @@ const BASE = "https://hijala.com";
 const SOURCE_ID = "hijala-ar";
 const SOURCE_NAME = "Hijala Manga";
 
-async function getDoc(path) {
+async function getPage(path) {
   const res = await harbor.http(BASE + path, { responseType: "text" });
   if (!res || res.ok === false) throw new Error("Hijala HTTP " + (res?.status || "error"));
-  return harbor.parseHtml(res.body);
+  return { body: res.body || "", doc: harbor.parseHtml(res.body || "") };
+}
+async function getDoc(path) {
+  return (await getPage(path)).doc;
 }
 function abs(url) {
   if (!url) return undefined;
@@ -98,7 +101,12 @@ const plugin = {
     const titleEl = first(doc, ["h1.entry-title", "h1", ".post-title"]);
     const coverEl = first(doc, [".summary_image img", ".thumb img", ".poster img", "article img"]);
     const descEl = first(doc, [".description", ".summary__content", ".entry-content p", ".manga-excerpt"]);
-    const chapterLink = first(doc, ["a[href*='chapter']", ".listing-chapters_wrap a", ".wp-manga-chapter a"]);
+    const chapterLinks = [
+      ...doc.querySelectorAll(".wp-manga-chapter a[href]"),
+      ...doc.querySelectorAll(".listing-chapters_wrap a[href]"),
+      ...doc.querySelectorAll(".chapter-list a[href]")
+    ];
+    const chapterLink = chapterLinks.find(a => !/\\{\\{|\\}\\}/.test(text(a) + attr(a, ["href"]))) || null;
     return {
       id: String(id).replace(/^\/+|\/+$/g, ""),
       title: text(titleEl) || String(id),
@@ -108,25 +116,71 @@ const plugin = {
     };
   },
   async chapters(id) {
-    const doc = await getDoc("/" + String(id).replace(/^\/+|\/+$/g, "") + "/");
+    const path = "/" + String(id).replace(/^\/+|\/+$/g, "") + "/";
+    const { body, doc } = await getPage(path);
     let links = [];
-    for (const selector of [".wp-manga-chapter a", ".listing-chapters_wrap a", ".chapter-list a", "a[href*='chapter']"]) {
-      links = doc.querySelectorAll(selector);
-      if (links && links.length) break;
+    // Prefer chapter-list containers, avoiding generic links that may be UI templates.
+    for (const selector of [
+      ".wp-manga-chapter a[href]",
+      ".listing-chapters_wrap a[href]",
+      ".chapter-list a[href]",
+      "#chapterlist a[href]",
+      ".chapters-list a[href]"
+    ]) {
+      const found = doc.querySelectorAll(selector);
+      if (found && found.length) {
+        const real = found.filter(a => {
+          const href = attr(a, ["href"]);
+          const label = text(a);
+          return href && !/\\{\\{|\\}\\}/.test(href + label) &&
+            /chapter|الفصل|فصل|ch[-_/ .]?\d|\\/\\d+(?:\\.\\d+)?\\/?$/i.test(href + " " + label);
+        });
+        if (real.length) { links = real; break; }
+      }
     }
-    return links.map(a => {
+
+    // Some pages expose real chapter anchors in the raw HTML but the parser's
+    // broad selectors can hit an unexpanded {{number}}{{date}} template first.
+    if (!links.length) {
+      const seen = new Set();
+      const matches = body.match(/<a\\b[^>]*href=["']([^"']+)["'][^>]*>([\\s\\S]*?)<\\/a>/gi) || [];
+      for (const tag of matches) {
+        const hrefMatch = tag.match(/href=["']([^"']+)["']/i);
+        if (!hrefMatch) continue;
+        const href = hrefMatch[1];
+        const labelRaw = tag.replace(/^[\\s\\S]*?>/, "").replace(/<[^>]+>/g, " ").replace(/&nbsp;|&#160;/g, " ").replace(/&amp;/g, "&");
+        const label = cleanChapterLabel(labelRaw, href);
+        if (!href || /\\{\\{|\\}\\}/.test(href + label) || seen.has(href)) continue;
+        if (!/(chapter|الفصل|فصل|ch[-_/ .]?\\d|\\/\\d+(?:\\.\\d+)?\\/?)/i.test(href + " " + label)) continue;
+        if (!/(chapter|الفصل|فصل|ch\\.?\\s*\\d|\\d+(?:\\.\\d+)?)/i.test(label + " " + href)) continue;
+        seen.add(href);
+        links.push({ attr: (name) => name === "href" ? href : undefined, text: () => label });
+      }
+    }
+
+    const output = [];
+    const seenIds = new Set();
+    for (const a of links) {
       const href = attr(a, ["href"]);
-      const label = cleanChapterLabel(text(a), href);
-      const num = label.match(/(?:الفصل|chapter|ch\.?)\s*\.?\s*([0-9]+(?:\.[0-9]+)?)/i) ||
-                  (href || "").match(/(\d+(?:\.\d+)?)(?:\/?$)/);
-      return {
-        id: pathId(href),
+      const rawLabel = text(a);
+      const label = cleanChapterLabel(rawLabel, href);
+      const id = pathId(href);
+      if (!id || /\\{\\{|\\}\\}/.test(label) || seenIds.has(id)) continue;
+      // Ignore navigation links or empty template labels.
+      if (!/(الفصل|فصل|chapter|ch\\.?\\s*\\d|\\d+(?:\\.\\d+)?)/i.test(label + " " + href)) continue;
+      const num = label.match(/(?:الفصل|فصل|chapter|ch\\.?)\\s*[-#.]?\\s*([0-9]+(?:\\.[0-9]+)?)/i) ||
+                  href.match(/(?:chapter|ch)[-_/ .]?([0-9]+(?:\\.[0-9]+)?)/i) ||
+                  href.match(/([0-9]+(?:\\.[0-9]+)?)(?:\\/?(?:\\?.*)?)$/i);
+      seenIds.add(id);
+      output.push({
+        id,
         chapter: num ? num[1] : null,
-        title: label,
+        title: label || (num ? "الفصل " + num[1] : "الفصل"),
         pages: 0,
         language: "ar"
-      };
-    }).filter(c => c.id);
+      });
+    }
+    return output;
   },
   async pageUrls(chapterId) {
     const doc = await getDoc("/" + String(chapterId).replace(/^\/+|\/+$/g, "") + "/");
