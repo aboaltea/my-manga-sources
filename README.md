@@ -2,7 +2,6 @@
 
 This patch replaces only:
 - `mangadex.plugin.js`: requests up to 500 English chapters, excludes external links, adds retries for API calls, and uses MangaDex data-saver image URLs.
-- `hijala.plugin.js`: normalizes IDs, removes common relative date text from chapter labels, and improves selector fallbacks.
 
 Important limitations:
 - MangaDex can only return chapters available in English and hosted directly on MangaDex through this feed. If older chapters are only available in another language or on a different website, this source cannot conjure them.
